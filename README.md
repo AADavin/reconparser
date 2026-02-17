@@ -1,0 +1,267 @@
+# reconparser
+
+**reconparser** is a Python library for parsing phylogenetic reconciliation outputs from various software tools.
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Features
+
+- **ALE (Amalgamated Likelihood Estimation)** - Complete parser for ALE reconciliation outputs
+  - Consensus gene trees (`.ucons_tree`)
+  - Transfer events with frequencies (`.uTs`)
+  - Maximum likelihood reconciliations (`.uml_rec`)
+  - ML rates (Duplications, Transfers, Losses)
+  - Log-likelihood values
+  - Per-branch reconciliation statistics
+  - Variable number of reconciled gene trees
+
+- **Extensible** - Designed to support additional reconciliation tools in future releases
+
+## Installation
+
+```bash
+pip install reconparser
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/aadavin/reconparser.git
+cd reconparser
+pip install -e .
+```
+
+### Dependencies
+
+- Python ≥ 3.10
+- ete3 (for tree handling)
+- pandas (for data tables)
+- numpy
+
+## Quick Start
+
+```python
+from reconparser import ALEParser
+
+# Initialize parser with ALE output files
+parser = ALEParser("results.ale")
+
+# Parse consensus gene tree
+gene_tree = parser.get_consensus_tree()
+print(f"Gene tree has {len(gene_tree.get_leaves())} leaves")
+
+# Get transfer events
+transfers = parser.get_transfers()
+print(f"Found {len(transfers)} transfer events")
+print(transfers.head())
+
+# Get ML reconciliation rates
+ml_rates = parser.get_ml_rates()
+print(f"Duplication rate: {ml_rates['duplications']:.4f}")
+print(f"Transfer rate: {ml_rates['transfers']:.4f}")
+print(f"Loss rate: {ml_rates['losses']:.4f}")
+
+# Get log-likelihood
+logl = parser.get_log_likelihood()
+print(f"Log-likelihood: {logl:.2f}")
+
+# Get per-branch statistics
+branch_stats = parser.get_branch_statistics()
+print(f"Branches with transfers:")
+print(branch_stats[branch_stats['transfers'] > 0])
+
+# Get all reconciled gene trees (default 100)
+gene_trees = parser.get_reconciled_gene_trees()
+print(f"Parsed {len(gene_trees)} reconciled gene trees")
+```
+
+## Detailed Usage
+
+### Working with ALE Output
+
+ALE produces three main output files:
+
+1. **`.ucons_tree`** - Consensus gene tree in Newick format
+2. **`.uTs`** - Transfer events (tab-separated: from, to, frequency)
+3. **`.uml_rec`** - Maximum likelihood reconciliation with:
+   - Species tree
+   - Reconciled gene trees (variable number, default 100)
+   - ML rate estimates (D, T, L)
+   - Log-likelihood
+   - Summary statistics
+   - Per-branch event counts
+
+### Example: Analyzing Transfers
+
+```python
+from reconparser import ALEParser
+
+parser = ALEParser("my_analysis.ale")
+
+# Get all transfers
+transfers = parser.get_transfers()
+
+# Filter high-frequency transfers
+high_freq = transfers[transfers['freq'] > 0.1]
+print(f"High-frequency transfers: {len(high_freq)}")
+
+# Get top 10 by frequency
+top_transfers = transfers.nlargest(10, 'freq')
+for _, row in top_transfers.iterrows():
+    print(f"{row['from']} → {row['to']}: {row['freq']:.3f}")
+```
+
+### Example: Branch-Level Analysis
+
+```python
+from reconparser import ALEParser
+
+parser = ALEParser("my_analysis.ale")
+
+# Get branch statistics
+branch_stats = parser.get_branch_statistics()
+
+# Find hotspot branches
+hotspots = branch_stats[
+    (branch_stats['transfers'] > 2) |
+    (branch_stats['duplications'] > 2)
+]
+
+print(f"Hotspot branches: {len(hotspots)}")
+print(hotspots[['branch_id', 'duplications', 'transfers', 'losses']])
+```
+
+### Example: Get All Data at Once
+
+```python
+from reconparser import ALEParser
+
+parser = ALEParser("my_analysis.ale")
+
+# Extract everything
+data = parser.get_all_data()
+
+# Access different components
+if data['species_tree'] is not None:
+    print(f"Species tree: {len(data['species_tree'].get_leaves())} taxa")
+
+if data['ml_rates'] is not None:
+    print(f"ML rates: {data['ml_rates']}")
+
+if data['branch_statistics'] is not None:
+    print(f"Branch stats shape: {data['branch_statistics'].shape}")
+```
+
+## API Reference
+
+### ALEParser
+
+```python
+ALEParser(base_path: str | Path)
+```
+
+Initialize parser with path to ALE output files.
+
+**Parameters:**
+- `base_path`: Path to ALE files (with or without extension)
+
+**Methods:**
+
+- `get_consensus_tree()` → `ete3.Tree`
+  Parse consensus gene tree from `.ucons_tree` file
+
+- `get_transfers()` → `pd.DataFrame`
+  Parse transfer events from `.uTs` file
+  Returns DataFrame with columns: `from`, `to`, `freq`
+
+- `get_transfers_as_dict_list()` → `List[Dict]`
+  Get transfers as list of dictionaries (convenient for visualization)
+
+- `get_reconciled_tree()` → `ete3.Tree`
+  Parse species tree from `.uml_rec` file
+
+- `get_reconciled_gene_trees()` → `List[ete3.Tree]`
+  Parse all reconciled gene trees (with D@/T@ annotations)
+
+- `get_ml_rates()` → `Dict[str, float]`
+  Get ML rates: `{'duplications': float, 'transfers': float, 'losses': float}`
+
+- `get_log_likelihood()` → `float`
+  Get log-likelihood of reconciliation
+
+- `get_summary_statistics()` → `Dict[str, float]`
+  Get total event counts across all branches
+
+- `get_branch_statistics()` → `pd.DataFrame`
+  Get per-branch event statistics
+
+- `get_all_data()` → `Dict`
+  Extract all available data in one call
+
+- `files_exist()` → `Dict[str, bool]`
+  Check which output files are present
+
+## File Format Support
+
+### Current Support
+
+- **ALE (v0.4+)** - Full support for all output files
+
+### Planned Support
+
+Future releases will include parsers for additional reconciliation tools. Check the [issues page](https://github.com/aadavin/reconparser/issues) or open a feature request for your preferred tool.
+
+## Development
+
+### Running Tests
+
+```bash
+cd reconparser
+pip install -e ".[dev]"
+pytest tests/
+```
+
+### Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/new-parser`)
+3. Commit your changes (`git commit -am 'Add parser for ToolX'`)
+4. Push to the branch (`git push origin feature/new-parser`)
+5. Open a Pull Request
+
+## Citation
+
+If you use reconparser in your research, please cite:
+
+```
+@software{reconparser2024,
+  author = {Davin, Adrian A.},
+  title = {reconparser: A Python library for parsing phylogenetic reconciliation outputs},
+  year = {2024},
+  url = {https://github.com/aadavin/reconparser}
+}
+```
+
+And please also cite the original reconciliation software you used (e.g., ALE).
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Links
+
+- **GitHub**: https://github.com/aadavin/reconparser
+- **PyPI**: https://pypi.org/project/reconparser/
+- **Documentation**: https://reconparser.readthedocs.io/ (coming soon)
+- **Issues**: https://github.com/aadavin/reconparser/issues
+
+## Acknowledgments
+
+reconparser is developed and maintained by Adrian A. Davin.
+
+Special thanks to the developers of:
+- **ALE** - Szöllősi GJ, et al. (2013)
+- **ete3** - Huerta-Cepas J, et al. (2016)
