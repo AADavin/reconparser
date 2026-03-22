@@ -43,13 +43,11 @@ class ALEParser:
         self.base_path = Path(base_path)
 
         # If a specific file was provided, extract the base path
-        if self.base_path.suffix in ['.ucons_tree', '.uTs', '.uml_rec']:
-            # Remove the ALE-specific extension
-            base_str = str(self.base_path)
-            for ext in ['.ucons_tree', '.uTs', '.uml_rec']:
-                if base_str.endswith(ext):
-                    self.base_path = Path(base_str[:-len(ext)])
-                    break
+        base_str = str(self.base_path)
+        for ext in ['.ucons_tree', '.uTs', '.uml_rec']:
+            if base_str.endswith(ext):
+                self.base_path = Path(base_str[:-len(ext)])
+                break
 
         # Define file paths
         self.ucons_tree_path = Path(str(self.base_path) + '.ucons_tree')
@@ -270,8 +268,14 @@ class ALEParser:
                     }
                 line_idx += 1
 
-        # Skip empty line and header for branch statistics
+        # Skip to branch statistics header line
+        # ALE v0.4 header: "# of\tDuplications\tTransfers\tLosses\tOriginations\tcopies"
+        # ALE v1.0 header: "# of\tDuplications\tTransfers\tLosses\tOriginations\tcopies\tsingletons\textinction_prob\tpresence\tLL"
         while line_idx < len(lines) and not lines[line_idx].strip().startswith('S_'):
+            # Detect column header to determine format
+            if line_idx < len(lines) and lines[line_idx].startswith('# of'):
+                header_line = lines[line_idx].strip()
+                self._branch_has_singletons = 'singletons' in header_line.lower()
             line_idx += 1
 
         # Parse branch statistics table
@@ -281,15 +285,31 @@ class ALEParser:
             if line.startswith('S_terminal_branch') or line.startswith('S_internal_branch'):
                 parts = line.split('\t')
                 if len(parts) >= 7:
-                    branch_data.append({
+                    # Clean branch_id: ALE v1.0 uses "name(idx)" for terminals
+                    # e.g. "a10(0)" → "a10"
+                    branch_id = parts[1]
+                    paren_match = re.match(r'^(.+?)\(\d+\)$', branch_id)
+                    if paren_match:
+                        branch_id = paren_match.group(1)
+
+                    row = {
                         'branch_type': parts[0],
-                        'branch_id': parts[1],
+                        'branch_id': branch_id,
                         'duplications': float(parts[2]),
                         'transfers': float(parts[3]),
                         'losses': float(parts[4]),
                         'originations': float(parts[5]),
-                        'copies': float(parts[6])
-                    })
+                        'copies': float(parts[6]),
+                    }
+
+                    # ALE v1.0 extra columns
+                    if len(parts) >= 11:
+                        row['singletons'] = float(parts[7])
+                        row['extinction_prob'] = float(parts[8])
+                        row['presence'] = float(parts[9])
+                        row['branch_LL'] = float(parts[10])
+
+                    branch_data.append(row)
             line_idx += 1
 
         if branch_data:
@@ -417,10 +437,13 @@ class ALEParser:
         """
         Parse and return per-branch reconciliation statistics.
 
+        Supports both ALE v0.4 (7 columns) and ALE v1.0 (11 columns).
+        Terminal branch IDs are cleaned: "a10(0)" → "a10".
+
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns:
+            DataFrame with columns (always present):
             - 'branch_type': 'S_terminal_branch' or 'S_internal_branch'
             - 'branch_id': Branch identifier (leaf name or internal node ID)
             - 'duplications': Number of duplication events on this branch
@@ -428,6 +451,12 @@ class ALEParser:
             - 'losses': Number of loss events on this branch
             - 'originations': Number of origination events on this branch
             - 'copies': Number of gene copies on this branch
+
+            Additional columns (ALE v1.0 only):
+            - 'singletons': Number of singleton events on this branch
+            - 'extinction_prob': Extinction probability on this branch
+            - 'presence': Presence probability on this branch
+            - 'branch_LL': Per-branch log-likelihood contribution
 
         Raises
         ------
